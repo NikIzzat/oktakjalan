@@ -30,7 +30,7 @@ import {
   fetchStatuses,
   saveReport,
   saveStatus,
-  subscribeToAccessway,
+  subscribeToOkTakRoute,
   supabase,
   supabaseConfigError,
 } from './data/supabase'
@@ -40,15 +40,15 @@ function readStored(key, fallback) {
     const value = localStorage.getItem(key)
     return value ? JSON.parse(value) : fallback
   } catch (error) {
-    console.warn(`Could not load AccessWay ${key} from this browser.`, error)
+    console.warn(`Could not load OkTakRoute ${key} from this browser.`, error)
     return fallback
   }
 }
 
-const savedStatuses = readStored('accessway-segment-statuses', {})
+const savedStatuses = readStored('oktakroute-segment-statuses', {})
 const segmentStatuses = ref({ ...initialSegmentStatuses, ...savedStatuses })
-const statusReasons = ref(readStored('accessway-status-reasons', {}))
-const storedReports = readStored('accessway-reports', [])
+const statusReasons = ref(readStored('oktakroute-status-reasons', {}))
+const storedReports = readStored('oktakroute-reports', [])
 const reports = ref(Array.isArray(storedReports) ? storedReports : [])
 const selectedRouteId = ref(routes[0].id)
 const selectedSegmentId = ref(routes[0].segments[0].properties.id)
@@ -80,7 +80,7 @@ watch(selectedRouteId, (id) => {
 
 watch(segmentStatuses, (value) => {
   try {
-    localStorage.setItem('accessway-segment-statuses', JSON.stringify(value))
+    localStorage.setItem('oktakroute-segment-statuses', JSON.stringify(value))
   } catch (error) {
     console.error('Could not save route statuses in this browser.', error)
     showNotice('Your update is active for this session but could not be saved.')
@@ -89,7 +89,7 @@ watch(segmentStatuses, (value) => {
 
 watch(statusReasons, (value) => {
   try {
-    localStorage.setItem('accessway-status-reasons', JSON.stringify(value))
+    localStorage.setItem('oktakroute-status-reasons', JSON.stringify(value))
   } catch (error) {
     console.error('Could not save route notes in this browser.', error)
   }
@@ -97,7 +97,7 @@ watch(statusReasons, (value) => {
 
 watch(reports, (value) => {
   try {
-    localStorage.setItem('accessway-reports', JSON.stringify(value))
+    localStorage.setItem('oktakroute-reports', JSON.stringify(value))
   } catch (error) {
     console.error('Could not save reports in this browser.', error)
     showNotice('Report submitted, but browser storage is full. Remove an older report to keep it between visits.')
@@ -111,7 +111,7 @@ onMounted(async () => {
   }
   if (!supabase) return
 
-  realtimeChannel = subscribeToAccessway(
+  realtimeChannel = subscribeToOkTakRoute(
     (payload) => {
       if (payload.eventType === 'DELETE') {
         delete segmentStatuses.value[payload.old.segment_id]
@@ -130,7 +130,7 @@ onMounted(async () => {
     },
     (status, error) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.error('AccessWay realtime connection failed.', error)
+        console.error('OkTakRoute realtime connection failed.', error)
         showNotice('Live sync is unavailable; updates are saved in this browser.')
       }
     },
@@ -155,7 +155,7 @@ onMounted(async () => {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       .slice(0, 30)
   } catch (error) {
-    console.error('Could not load AccessWay data from Supabase.', error)
+    console.error('Could not load OkTakRoute data from Supabase.', error)
     showNotice('Cloud sync could not load. Local browser data is still available.')
   }
 })
@@ -211,9 +211,9 @@ function setNav(item) {
 <template>
   <div class="app-frame">
     <header class="topbar">
-      <a class="brand" href="#" aria-label="AccessWay home" @click.prevent="setNav('Explore')">
+      <a class="brand" href="#" aria-label="OkTakRoute home" @click.prevent="setNav('Explore')">
         <span class="brand-mark"><Accessibility :size="22" stroke-width="2.4" /></span>
-        <span class="brand-name">access<span>way</span></span>
+        <span class="brand-name">oktak<span>route</span></span>
       </a>
       <nav class="top-navigation" aria-label="Main navigation">
         <button :class="{ active: activeNav === 'Explore' }" type="button" @click="setNav('Explore')"><Compass :size="17" /> Explore</button>
@@ -221,13 +221,13 @@ function setNav(item) {
       </nav>
       <div class="topbar-actions">
         <button class="help-button" type="button" @click="showNotice('Need help? Ask campus support at the accessibility desk.')"><CircleHelp :size="17" /><span>Help</span></button>
-        <button class="avatar" type="button" aria-label="Your profile" @click="showNotice('Welcome to AccessWay, Alex.')">A</button>
+        <button class="avatar" type="button" aria-label="Your profile" @click="showNotice('Welcome to OkTakRoute, Alex.')">A</button>
       </div>
     </header>
 
     <main class="page-content">
       <section class="welcome-row">
-        <div>
+        <div align-items="center">
           <div class="welcome-kicker"><span class="live-indicator"></span> YOUR CAMPUS, MADE ACCESSIBLE</div>
           <h1>Every path should <span>lead somewhere.</span></h1>
           <p class="welcome-copy">Find a step-free route and get there with a little more confidence.</p>
@@ -335,7 +335,7 @@ function setNav(item) {
         </div>
       </section>
 
-      <footer class="page-footer"><span>© {{ currentYear }} AccessWay</span><span>Built for a campus where everyone belongs <span class="footer-heart">♥</span></span><span><ShieldCheck :size="14" /> Accessibility first</span></footer>
+      <footer class="page-footer"><span>© {{ currentYear }} OkTakRoute</span><span>Built for a campus where everyone belongs <span class="footer-heart">♥</span></span><span><ShieldCheck :size="14" /> Accessibility first</span></footer>
     </main>
 
     <div v-if="notice" class="toast" role="status"><Check :size="16" />{{ notice }}<button type="button" aria-label="Dismiss notification" @click="notice = ''"><X :size="15" /></button></div>

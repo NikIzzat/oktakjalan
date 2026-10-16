@@ -68,9 +68,9 @@ export async function saveReport(report) {
   if (error) throw error
 }
 
-export function subscribeToAccessway(onStatusChange, onReport, onConnectionChange) {
+export function subscribeToOkTakRoute(onStatusChange, onReport, onConnectionChange) {
   return supabase
-    .channel('accessway-live')
+    .channel('oktakroute-live')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'route_segment_statuses' }, (payload) => {
       onStatusChange(payload)
     })

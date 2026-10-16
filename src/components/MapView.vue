@@ -28,7 +28,7 @@ function drawRoute() {
       : (props.statuses[segment.properties.id] || segment.properties.status)
     const points = segment.geometry.coordinates.map(([lng, lat]) => [lat, lng])
     L.polyline(points, {
-      color: state === 'open' ? '#168468' : '#d65345',
+      color: state === 'open' ? '#2d77c4' : '#d65345',
       weight: 7,
       opacity: state === 'open' ? 0.95 : 0.9,
       lineCap: 'round',
@@ -41,7 +41,7 @@ function drawRoute() {
         radius: 5,
         color: '#fff',
         weight: 3,
-        fillColor: state === 'open' ? '#168468' : '#d65345',
+        fillColor: state === 'open' ? '#2d77c4' : '#d65345',
         fillOpacity: 1,
       }).addTo(markersLayer)
     }
@@ -57,7 +57,7 @@ function drawRoute() {
     radius: 8,
     color: '#fff',
     weight: 3,
-    fillColor: '#213f36',
+    fillColor: '#2d77c4',
     fillOpacity: 1,
   }).bindTooltip('Campus gate', { direction: 'top', offset: [0, -8] }).addTo(markersLayer)
 
@@ -65,7 +65,7 @@ function drawRoute() {
     radius: 8,
     color: '#fff',
     weight: 3,
-    fillColor: props.status === 'open' ? '#168468' : '#d65345',
+    fillColor: props.status === 'open' ? '#38b6ff' : '#d65345',
     fillOpacity: 1,
   }).bindTooltip(props.route.destination, { direction: 'top', offset: [0, -8] }).addTo(markersLayer)
 

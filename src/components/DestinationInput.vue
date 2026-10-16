@@ -13,7 +13,7 @@ const emit = defineEmits(['update:modelValue'])
   <div class="destination-input">
     <label class="field-label" for="destination">Where would you like to go?</label>
     <div class="select-wrap">
-      <MapPin :size="18" aria-hidden="true" />
+
       <select
         id="destination"
         :value="modelValue"
