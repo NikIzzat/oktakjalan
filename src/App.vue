@@ -1,355 +1,204 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import {
-  Accessibility,
-  ArrowDownRight,
-  ArrowRight,
-  Bell,
-  Check,
-  ChevronRight,
-  CircleHelp,
-  Clock3,
-  Compass,
-  Heart,
-  Map,
-  MessageSquareText,
-  Navigation,
-  Plus,
-  ShieldCheck,
-  Sparkles,
-  X,
-} from '@lucide/vue'
-import DestinationInput from './components/DestinationInput.vue'
-import MapView from './components/MapView.vue'
-import MaintenanceStatus from './components/MaintenanceStatus.vue'
-import ReportForm from './components/ReportForm.vue'
-import RouteDecision from './components/RouteDecision.vue'
-import { buildRoute, initialSegmentStatuses, locations } from './data/routes'
-import {
-  fetchReports,
-  fetchStatuses,
-  saveReport,
-  saveStatus,
-  subscribeToOkTakRoute,
-  supabase,
-  supabaseConfigError,
-} from './data/supabase'
+import { ref, computed } from 'vue'
 
-function readStored(key, fallback) {
-  try {
-    const value = localStorage.getItem(key)
-    return value ? JSON.parse(value) : fallback
-  } catch (error) {
-    console.warn(`Could not load OkTakRoute ${key} from this browser.`, error)
-    return fallback
-  }
+const mode = ref('login') // 'login' | 'signup'
+const form = ref({ name: '', identity: '', email: '', password: '' })
+const isLogin = computed(() => mode.value === 'login')
+
+function submit() {
+  // Replace with your real auth call
+  console.log(mode.value, { ...form.value })
 }
 
-const savedStatuses = readStored('oktakroute-segment-statuses', {})
-const segmentStatuses = ref({ ...initialSegmentStatuses, ...savedStatuses })
-const statusReasons = ref(readStored('oktakroute-status-reasons', {}))
-const storedReports = readStored('oktakroute-reports', [])
-const reports = ref(Array.isArray(storedReports) ? storedReports : [])
-const selectedOriginId = ref('gate')
-const selectedDestinationId = ref('library')
-const selectedSegmentId = ref(buildRoute('gate', 'library').segments[0].properties.id)
-const isReportOpen = ref(false)
-const notice = ref('')
-const activeNav = ref('Explore')
-const currentYear = new Date().getFullYear()
-let realtimeChannel
-
-const originOptions = computed(() => locations.map((item) => ({ id: item.id, destination: item.name })))
-const destinationOptions = computed(() => originOptions.value.filter((item) => item.id !== selectedOriginId.value))
-const route = computed(() => buildRoute(selectedOriginId.value, selectedDestinationId.value))
-const isBlocked = (item) => item.segments.some((segment) => ['maintenance', 'closed'].includes(segmentStatuses.value[segment.properties.id]))
-const routeStatus = computed(() => {
-  if (!route.value.accessible) return 'inaccessible'
-  if (route.value.segments.some((segment) => ['maintenance', 'closed'].includes(segmentStatuses.value[segment.properties.id]))) return 'maintenance'
-  return 'open'
-})
-const alternateRoute = computed(() => locations
-  .filter((item) => item.id !== selectedOriginId.value && item.id !== selectedDestinationId.value)
-  .map((item) => buildRoute(selectedOriginId.value, item.id))
-  .find((item) => item && item.accessible && !isBlocked(item)) || null)
-const statusReason = computed(() => {
-  const problemSegment = route.value.segments.find((segment) => ['maintenance', 'closed'].includes(segmentStatuses.value[segment.properties.id]))
-  return problemSegment
-    ? statusReasons.value[problemSegment.properties.id] || problemSegment.properties.reason || 'This section is temporarily closed.'
-    : route.value.reason
-})
-const recentReports = computed(() => reports.value.slice(0, 3))
-
-watch(selectedOriginId, (id) => {
-  if (id === selectedDestinationId.value) {
-    selectedDestinationId.value = locations.find((item) => item.id !== id).id
-  }
-})
-
-watch(() => route.value.id, () => {
-  selectedSegmentId.value = route.value.segments[0].properties.id
-})
-
-watch(segmentStatuses, (value) => {
-  try {
-    localStorage.setItem('oktakroute-segment-statuses', JSON.stringify(value))
-  } catch (error) {
-    console.error('Could not save route statuses in this browser.', error)
-    showNotice('Your update is active for this session but could not be saved.')
-  }
-}, { deep: true })
-
-watch(statusReasons, (value) => {
-  try {
-    localStorage.setItem('oktakroute-status-reasons', JSON.stringify(value))
-  } catch (error) {
-    console.error('Could not save route notes in this browser.', error)
-  }
-}, { deep: true })
-
-watch(reports, (value) => {
-  try {
-    localStorage.setItem('oktakroute-reports', JSON.stringify(value))
-  } catch (error) {
-    console.error('Could not save reports in this browser.', error)
-    showNotice('Report submitted, but browser storage is full. Remove an older report to keep it between visits.')
-  }
-}, { deep: true })
-
-onMounted(async () => {
-  if (supabaseConfigError) {
-    showNotice(supabaseConfigError)
-    return
-  }
-  if (!supabase) return
-
-  realtimeChannel = subscribeToOkTakRoute(
-    (payload) => {
-      if (payload.eventType === 'DELETE') {
-        delete segmentStatuses.value[payload.old.segment_id]
-        delete statusReasons.value[payload.old.segment_id]
-        return
-      }
-      const row = payload.new
-      segmentStatuses.value[row.segment_id] = row.status
-      if (row.reason) statusReasons.value[row.segment_id] = row.reason
-      else delete statusReasons.value[row.segment_id]
-    },
-    (report) => {
-      if (!reports.value.some((item) => item.id === report.id)) {
-        reports.value.unshift(report)
-      }
-    },
-    (status, error) => {
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        console.error('OkTakRoute realtime connection failed.', error)
-        showNotice('Live sync is unavailable; updates are saved in this browser.')
-      }
-    },
-  )
-
-  try {
-    const [remoteStatuses, remoteReports] = await Promise.all([fetchStatuses(), fetchReports()])
-    const serverIds = new Set(remoteStatuses.map((item) => item.segment_id))
-    remoteStatuses.forEach((item) => {
-      segmentStatuses.value[item.segment_id] = item.status
-      if (item.reason) statusReasons.value[item.segment_id] = item.reason
-      else delete statusReasons.value[item.segment_id]
-    })
-    for (const [segmentId, status] of Object.entries(segmentStatuses.value)) {
-      if (!serverIds.has(segmentId)) await saveStatus(segmentId, status, statusReasons.value[segmentId] || '')
-    }
-    const remoteIds = new Set(remoteReports.map((item) => item.id))
-    for (const report of reports.value) {
-      if (!remoteIds.has(report.id)) await saveReport(report)
-    }
-    reports.value = [...remoteReports, ...reports.value.filter((item) => !remoteIds.has(item.id))]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 30)
-  } catch (error) {
-    console.error('Could not load OkTakRoute data from Supabase.', error)
-    showNotice('Cloud sync could not load. Local browser data is still available.')
-  }
-})
-
-onUnmounted(() => {
-  if (realtimeChannel && supabase) supabase.removeChannel(realtimeChannel)
-})
-
-function showNotice(message) {
-  notice.value = message
-  window.clearTimeout(showNotice.timeout)
-  showNotice.timeout = window.setTimeout(() => { notice.value = '' }, 3600)
-}
-
-function setSegmentStatus(segmentId, status) {
-  segmentStatuses.value[segmentId] = status
-  if (status === 'maintenance') statusReasons.value[segmentId] = 'Section marked for maintenance by a campus user.'
-  else delete statusReasons.value[segmentId]
-  const label = status === 'maintenance' ? 'closed for maintenance' : 'reopened'
-  showNotice(`Route section ${label}.`)
-  if (supabase) {
-    saveStatus(segmentId, status, statusReasons.value[segmentId] || '').catch((error) => {
-      console.error('Could not sync this route status with Supabase.', error)
-      showNotice('Status changed here, but cloud sync failed.')
-    })
-  }
-}
-
-function submitReport(report) {
-  reports.value.unshift(report)
-  isReportOpen.value = false
-  showNotice('Thanks — your route report has been added.')
-  if (supabase) {
-    saveReport(report).catch((error) => {
-      console.error('Could not sync this report with Supabase.', error)
-      showNotice('Report saved here, but cloud sync failed.')
-    })
-  }
-}
-
-function formatDate(value) {
-  const date = new Date(value)
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
-}
-
-function setNav(item) {
-  activeNav.value = item
-  if (item === 'Updates') document.getElementById('updates')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  else window.scrollTo({ top: 0, behavior: 'smooth' })
-}
+const social = [
+  { name: 'Google', path: 'M12 5a7 7 0 1 0 6.9 8H12v-3h10a10 10 0 1 1-3-7.2l-2.3 2.3A7 7 0 0 0 12 5z' },
+  { name: 'Facebook', path: 'M14 8h3V4h-3a4 4 0 0 0-4 4v2H7v4h3v7h4v-7h3l1-4h-4V8z' },
+]
 </script>
 
 <template>
-  <div class="app-frame">
-    <header class="topbar">
-      <a class="brand" href="#" aria-label="OkTakRoute home" @click.prevent="setNav('Explore')">
-        <span class="brand-mark"><Accessibility :size="22" stroke-width="2.4" /></span>
-        <span class="brand-name">oktak<span>route</span></span>
-      </a>
-      <nav class="top-navigation" aria-label="Main navigation">
-        <button :class="{ active: activeNav === 'Explore' }" type="button" @click="setNav('Explore')"><Compass :size="17" /> Explore</button>
-        <button :class="{ active: activeNav === 'Updates' }" type="button" @click="setNav('Updates')"><MessageSquareText :size="17" /> Community updates <span v-if="reports.length" class="nav-count">{{ reports.length }}</span></button>
-      </nav>
-      <div class="topbar-actions">
-        <button class="help-button" type="button" @click="showNotice('Need help? Ask campus support at the accessibility desk.')"><CircleHelp :size="17" /><span>Help</span></button>
-        <button class="avatar" type="button" aria-label="Your profile" @click="showNotice('Welcome to OkTakRoute, Alex.')">A</button>
-      </div>
-    </header>
-
-    <main class="page-content">
-      <section class="welcome-row">
-        <div align-items="center">
-          <div class="welcome-kicker"><span class="live-indicator"></span> YOUR CAMPUS, MADE ACCESSIBLE</div>
-          <h1>Every path should <span>lead somewhere.</span></h1>
-          <p class="welcome-copy">Find a step-free route and get there with a little more confidence.</p>
-        </div>
-        <div class="campus-chip"><span class="campus-chip-icon"><Map :size="17" /></span><span><small>YOUR CAMPUS</small><strong>North Campus</strong></span><ChevronRight :size="16" /></div>
-      </section>
-
-      <div class="workspace-grid">
-        <aside class="planner-column">
-          <section class="planner-card">
-            <div class="planner-card-top">
-              <div class="planner-title-icon"><Navigation :size="18" /></div>
-              <div><p class="eyebrow">ROUTE PLANNER</p><h2>Where to next?</h2></div>
-            </div>
-            <div class="origin-destination">
-              <div class="origin-row">
-                <span class="location-marker location-marker--origin"><span></span></span>
-                <DestinationInput :destinations="originOptions" v-model="selectedOriginId" label="Where are you starting from?" input-id="origin" />
-              </div>
-              <div class="route-connector"><span></span></div>
-              <div class="destination-row">
-                <span class="location-marker location-marker--destination"><span></span></span>
-                <DestinationInput :destinations="destinationOptions" v-model="selectedDestinationId" />
-              </div>
-            </div>
-            <RouteDecision
-              :route="route"
-              :status="routeStatus"
-              :reason="statusReason"
-              :alternate="alternateRoute"
-              @select-alternate="selectedDestinationId = $event"
-            />
-            <div class="planner-trust"><ShieldCheck :size="15" /><span>Routes are checked by our campus community</span><Sparkles :size="14" /></div>
-          </section>
-
-          <MaintenanceStatus
-            :route="route"
-            :statuses="segmentStatuses"
-            :selected-segment-id="selectedSegmentId"
-            :route-status="routeStatus"
-            @update:selected-segment-id="selectedSegmentId = $event"
-            @set-status="setSegmentStatus"
-          />
-
-          <button class="report-cta" type="button" @click="isReportOpen = true">
-            <span class="report-cta-icon"><Plus :size="19" /></span>
-            <span><strong>See something we should know?</strong><small>Share a quick update with the community</small></span>
-            <ArrowRight :size="18" />
-          </button>
-        </aside>
-
-        <section class="map-column" aria-label="Selected route map">
-          <div class="map-card">
-            <div class="map-card-header">
-              <div class="map-heading">
-                <div class="map-heading-icon"><Map :size="18" /></div>
-                <div><h2>Your route</h2><p>{{ route.origin }} <span>·</span> {{ route.destination }}</p></div>
-              </div>
-              <div class="live-pill"><span></span> LIVE STATUS</div>
-            </div>
-            <MapView :route="route" :statuses="segmentStatuses" :status="routeStatus" />
-            <div class="map-card-footer">
-              <div class="route-endpoints">
-                <span class="endpoint-dot"></span><span>{{ route.origin }}</span>
-                <ArrowRight class="endpoint-arrow" :size="14" />
-                <span class="endpoint-dot endpoint-dot--end" :class="{ 'endpoint-dot--closed': routeStatus !== 'open' }"></span>
-                <strong>{{ route.destination }}</strong>
-              </div>
-              <div class="verified-stamp"><ShieldCheck :size="15" /> Community verified</div>
-            </div>
-          </div>
-          <div class="map-under-row">
-            <div class="map-tip"><span><Heart :size="16" /></span><p><strong>Made for the way you move</strong><small>We prioritize step-free paths, gentle slopes &amp; smooth surfaces.</small></p></div>
-            <button class="map-feedback" type="button" @click="isReportOpen = true">Improve this map <ArrowDownRight :size="14" /></button>
-          </div>
-        </section>
-      </div>
-
-      <section id="updates" class="updates-section">
-        <div class="updates-heading">
-          <div class="updates-title">
-            <div class="updates-icon"><Bell :size="17" /></div>
-            <div><p class="eyebrow">FROM YOUR CAMPUS</p><h2>Recent updates</h2></div>
-          </div>
-          <button class="updates-link" type="button" @click="showNotice(reports.length ? `${reports.length} community update${reports.length === 1 ? '' : 's'} on your campus.` : 'No community updates yet — be the first to share one.')">View all updates <ArrowRight :size="15" /></button>
-        </div>
-
-        <div v-if="recentReports.length" class="updates-list">
-          <article v-for="report in recentReports" :key="report.id" class="update-item">
-            <div class="update-rating" :class="`update-rating--${report.rating.toLowerCase()}`">{{ report.rating === 'Good' ? '😊' : report.rating === 'Bad' ? '😕' : '😐' }}</div>
-            <div class="update-main">
-              <div class="update-topline"><strong>{{ report.segmentName }}</strong><span class="update-route">{{ report.routeName }}</span></div>
-              <p>{{ report.reason }}</p>
-              <div class="update-meta"><Clock3 :size="13" /> {{ formatDate(report.createdAt) }} <span v-if="report.photoName" class="update-photo"><span>·</span> Photo attached</span></div>
-            </div>
-            <img v-if="report.photoData" class="update-thumbnail" :src="report.photoData" alt="Photo attached to this route report" />
-            <span class="update-chevron"><ChevronRight :size="17" /></span>
-          </article>
-        </div>
-        <div v-else class="updates-empty">
-          <div class="empty-icon"><MessageSquareText :size="19" /></div>
-          <div><strong>Your campus is looking good.</strong><p>There aren’t any route updates yet. Share what you notice to help someone on their way.</p></div>
-          <button class="empty-action" type="button" @click="isReportOpen = true">Add an update <ArrowRight :size="15" /></button>
+  <div class="min-h-screen bg-white font-sans text-neutral-900">
+    <main class="grid min-h-[100svh] md:grid-cols-2">
+      <section
+        class="relative hidden items-center justify-center overflow-hidden bg-[#3d2c4d] md:flex"
+        aria-label="Accessibility illustration"
+      >
+        <div class="flex flex-col items-center">
+          <svg
+            viewBox="0 0 320 340"
+            class="oku-float h-auto w-[min(34vw,380px)] overflow-visible"
+            role="img"
+            aria-label="OKU accessibility symbol: a wheelchair user inside a blue badge"
+          >
+            <defs>
+              <radialGradient id="badge" cx="35%" cy="25%" r="85%">
+                <stop offset="0" stop-color="#3B82F6" />
+                <stop offset="1" stop-color="#0A2F73" />
+              </radialGradient>
+            </defs>
+            <circle cx="160" cy="150" r="128" fill="none" stroke="#22d3ee" stroke-width="4" opacity=".85" />
+            <circle cx="160" cy="150" r="120" fill="url(#badge)" />
+            <g
+              fill="none"
+              stroke="#fff"
+              stroke-width="13"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              transform="translate(10 -10)"
+            >
+              <circle cx="150" cy="78" r="13" fill="#fff" stroke="none" />
+              <path d="M150 106V165H198L222 215H240" />
+              <path d="M150 130H192" />
+              <path d="M110 159A52 52 0 1 0 183 232" />
+            </g>
+            <text
+              x="160"
+              y="312"
+              text-anchor="middle"
+              fill="#fff"
+              font-size="40"
+              font-weight="700"
+              letter-spacing="14"
+            >OKU</text>
+          </svg>
+          <div class="oku-shadow mt-6 h-3 w-56 rounded-[50%] bg-black/70 blur-[2px]"></div>
         </div>
       </section>
 
-      <footer class="page-footer"><span>© {{ currentYear }} OkTakRoute</span><span>Built for a campus where everyone belongs <span class="footer-heart">♥</span></span><span><ShieldCheck :size="14" /> Accessibility first</span></footer>
+      <section class="flex items-center justify-center px-6 py-16">
+        <div class="w-full max-w-[340px]">
+          <h1 class="brand-lockup mb-14 select-none">oktakjalan</h1>
+
+          <p class="mb-3 text-[13px] text-neutral-500">Express login via Google and Facebook</p>
+          <div class="flex gap-0.5">
+            <button
+              v-for="s in social"
+              :key="s.name"
+              type="button"
+              class="flex h-[50px] flex-1 items-center justify-between bg-[#f0f0f0] px-5 text-[15px] text-neutral-500 transition first:rounded-l-lg last:rounded-r-lg hover:bg-[#e6e6e6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+            >
+              {{ s.name }}
+              <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
+                <path :d="s.path" />
+              </svg>
+            </button>
+          </div>
+
+          <hr class="my-5 border-t-[3px] border-[#f0f0f0]" />
+
+          <div role="tablist" aria-label="Authentication mode" class="flex">
+            <button
+              v-for="t in [{ id: 'login', label: 'Log in' }, { id: 'signup', label: 'Sign up' }]"
+              :key="t.id"
+              role="tab"
+              type="button"
+              :aria-selected="mode === t.id"
+              class="rounded-t-lg px-5 py-3.5 text-[15px] transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+              :class="mode === t.id ? 'bg-[#f0f0f0] font-medium text-neutral-900' : 'text-neutral-500 hover:text-neutral-800'"
+              @click="mode = t.id"
+            >
+              {{ t.label }}
+            </button>
+          </div>
+
+          <form class="space-y-0.5" role="tabpanel" @submit.prevent="submit">
+            <label v-if="!isLogin" class="block">
+              <span class="sr-only">Name</span>
+              <input
+                v-model="form.name"
+                type="text"
+                autocomplete="name"
+                placeholder="full name"
+                class="h-[50px] w-full bg-[#f0f0f0] px-5 text-[15px] placeholder-neutral-500 outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
+              />
+            </label>
+            <label class="block">
+              <span class="sr-only">{{ isLogin ? 'Email or username' : 'Email' }}</span>
+              <input
+                v-if="isLogin"
+                v-model="form.identity"
+                type="text"
+                autocomplete="username"
+                placeholder="email or username"
+                required
+                class="h-[50px] w-full bg-[#f0f0f0] px-5 text-[15px] placeholder-neutral-500 outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
+              />
+              <input
+                v-else
+                v-model="form.email"
+                type="email"
+                autocomplete="email"
+                placeholder="email"
+                required
+                class="h-[50px] w-full bg-[#f0f0f0] px-5 text-[15px] placeholder-neutral-500 outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
+              />
+            </label>
+            <label class="block">
+              <span class="sr-only">Password</span>
+              <input
+                v-model="form.password"
+                type="password"
+                :autocomplete="isLogin ? 'current-password' : 'new-password'"
+                placeholder="password"
+                required
+                class="h-[50px] w-full bg-[#f0f0f0] px-5 text-[15px] placeholder-neutral-500 outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
+              />
+            </label>
+            <button
+              type="submit"
+              class="h-[50px] w-full rounded-b-lg bg-[#323232] text-[15px] font-medium text-white transition hover:bg-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+            >
+              {{ isLogin ? 'Log in' : 'Create account' }}
+            </button>
+          </form>
+
+          <p v-if="isLogin" class="mt-5 text-center text-sm">
+            <a href="#" class="hover:underline">Forgot password?</a>
+          </p>
+
+          <hr class="my-5 border-t-[3px] border-[#f0f0f0]" />
+
+          <a
+            href="#"
+            class="flex items-center gap-3 rounded-lg border-2 border-amber-300 bg-amber-50 px-3.5 py-3 text-[15px] transition hover:bg-amber-100"
+          >
+            <svg viewBox="0 0 24 24" class="h-6 w-6 text-amber-400" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <path d="M12 3 2 20h20L12 3z" stroke-linejoin="round" />
+              <path d="M12 10v5M12 17.5v.5" stroke-linecap="round" />
+            </svg>
+            Looking for the old portal?
+          </a>
+        </div>
+      </section>
     </main>
 
-    <div v-if="notice" class="toast" role="status"><Check :size="16" />{{ notice }}<button type="button" aria-label="Dismiss notification" @click="notice = ''"><X :size="15" /></button></div>
-    <ReportForm v-if="isReportOpen" :route="route" @close="isReportOpen = false" @submit="submitReport" />
   </div>
 </template>
+
+<style scoped>
+@keyframes oku-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+@keyframes oku-shadow {
+  0%, 100% { transform: scaleX(1); opacity: .7; }
+  50% { transform: scaleX(.82); opacity: .45; }
+}
+.oku-float { animation: oku-float 4s ease-in-out infinite; }
+.oku-shadow { animation: oku-shadow 4s ease-in-out infinite; }
+
+.brand-lockup {
+  font-size: 2.1rem;
+  font-weight: 300;
+  letter-spacing: 0.45em;
+  text-transform: lowercase;
+  background: linear-gradient(135deg, #111827 0%, #6d28d9 35%, #0ea5e9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oku-float, .oku-shadow { animation: none; }
+}
+</style>
